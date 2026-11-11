@@ -1,0 +1,70 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // Never allow raw PAN, CVV, full TCKN, or OTP codes to be written
+    function hasNoForbiddenSensitiveFields(data) {
+      return !('rawPan' in data)
+          && !('cardNumber' in data)
+          && !('cvv' in data)
+          && !('cvc' in data)
+          && !('tckn' in data)
+          && !('fullTckn' in data)
+          && !('otpCode' in data)
+          && !('password' in data);
+    }
+
+    match /users/{uid} {
+      allow read: if isOwner(uid);
+      allow create, update: if isOwner(uid)
+        && hasNoForbiddenSensitiveFields(request.resource.data)
+        && request.resource.data.uid == uid;
+      allow delete: if isOwner(uid);
+
+      match /cards/{cardId} {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid)
+          && hasNoForbiddenSensitiveFields(request.resource.data)
+          && request.resource.data.status in ['active', 'locked']
+          && request.resource.data.balance is number
+          && request.resource.data.balance >= 0;
+        allow delete: if false;
+      }
+
+      match /paymentMethods/{methodId} {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid)
+          && hasNoForbiddenSensitiveFields(request.resource.data)
+          && request.resource.data.lastFour is string
+          && request.resource.data.lastFour.size() == 4
+          && request.resource.data.expiryMonth >= 1
+          && request.resource.data.expiryMonth <= 12;
+        allow delete: if isOwner(uid);
+      }
+
+      match /transactions/{transactionId} {
+        allow read: if isOwner(uid);
+        allow create: if isOwner(uid)
+          && hasNoForbiddenSensitiveFields(request.resource.data)
+          && request.resource.data.amount is number
+          && request.resource.data.type in ['topUp', 'fare', 'subscription', 'refund'];
+        allow update, delete: if false;
+      }
+    }
+
+    match /supportContent/{docId} {
+      allow read: if true;
+      allow write: if false;
+    }
+  }
+}
+
